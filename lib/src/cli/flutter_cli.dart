@@ -2,6 +2,62 @@ part of 'cli.dart';
 
 const _testOptimizerFileName = '.test_optimizer.dart';
 
+// Static queue to manage test optimization tasks
+final _optimizationQueue = Queue<_OptimizationTask>();
+bool _isOptimizationRunning = false;
+
+class _OptimizationTask {
+  _OptimizationTask({
+    required this.workingDirectory,
+    required this.target,
+    required this.generator,
+    required this.vars,
+    required this.logger,
+    required this.completer,
+  });
+
+  final String workingDirectory;
+  final DirectoryGeneratorTarget target;
+  final MasonGenerator generator;
+  Map<String, dynamic> vars;
+  final Logger logger;
+  final Completer<void> completer;
+}
+
+// Process the next item in the optimization queue
+Future<void> _processNextOptimizationTask() async {
+  if (_isOptimizationRunning || _optimizationQueue.isEmpty) return;
+
+  _isOptimizationRunning = true;
+  final task = _optimizationQueue.removeFirst();
+
+  final optimizationProgress = task.logger.progress(
+    'Optimizing tests in ${p.basename(task.workingDirectory)}',
+  );
+
+  try {
+    await task.generator.hooks.preGen(
+      vars: task.vars,
+      onVarsChanged: (v) => task.vars = v,
+      workingDirectory: task.workingDirectory,
+    );
+    await task.generator.generate(
+      task.target,
+      vars: task.vars,
+      fileConflictResolution: FileConflictResolution.overwrite,
+    );
+    task.completer.complete();
+  } catch (e) {
+    optimizationProgress.fail('Optimization failed: $e');
+    task.completer.completeError(e);
+  } finally {
+    optimizationProgress.complete();
+    _isOptimizationRunning = false;
+    // Process the next task in the queue
+    _processNextOptimizationTask();
+  }
+}
+
 /// This class facilitates overriding `ProcessSignal` related behavior.
 /// It should be extended by another class in client code with overrides
 /// that construct a custom implementation.
@@ -233,16 +289,48 @@ class Flutter {
           try {
             final generator = await buildGenerator(testOptimizerBundle);
             var vars = <String, dynamic>{'package-root': workingDirectory};
-            await generator.hooks.preGen(
-              vars: vars,
-              onVarsChanged: (v) => vars = v,
-              workingDirectory: workingDirectory,
-            );
-            await generator.generate(
-              target,
-              vars: vars,
-              fileConflictResolution: FileConflictResolution.overwrite,
-            );
+
+            if (keepOptimizers) {
+              // Queue-based optimization when --keep-optimizers is provided
+              // Create a completer to wait for the optimization task
+              final completer = Completer<void>();
+
+              // Add task to the queue
+              _optimizationQueue.add(
+                _OptimizationTask(
+                  workingDirectory: workingDirectory,
+                  target: target,
+                  generator: generator,
+                  vars: vars,
+                  logger: logger,
+                  completer: completer,
+                ),
+              );
+
+              // Start processing queue if not already processing
+              if (!_isOptimizationRunning) {
+                await _processNextOptimizationTask();
+              }
+
+              // Wait for our task to complete
+              await completer.future;
+            } else {
+              // Original implementation for non-queued optimization
+              await generator.hooks.preGen(
+                vars: vars,
+                onVarsChanged: (v) => vars = v,
+                workingDirectory: workingDirectory,
+              );
+              await generator.generate(
+                target,
+                vars: vars,
+                fileConflictResolution: FileConflictResolution.overwrite,
+              );
+            }
+          } catch (e) {
+            stdout?.call('Warning: Test optimizer failed: $e\n');
+            optimizationProgress.fail();
+            optimizePerformance = false;
           } finally {
             optimizationProgress.complete();
           }
@@ -267,6 +355,10 @@ class Flutter {
           ).whenComplete(() async {
             if (optimizePerformance && !keepOptimizers) {
               await _cleanupOptimizerFile(cwd);
+            }
+
+            if (keepOptimizers) {
+              await _clearOptimizationQueue();
             }
 
             if (collectCoverage) {
@@ -412,6 +504,9 @@ Future<int> _flutterTest({
   sigintWatchSubscription = sigintWatch.listen((_) async {
     if (!keepOptimizers) {
       await _cleanupOptimizerFile(cwd);
+    }
+    if (keepOptimizers) {
+      await _clearOptimizationQueue();
     }
     await subscription.cancel();
     await sigintWatchSubscription.cancel();
@@ -634,5 +729,20 @@ extension on String {
 
   String toSingleLine() {
     return replaceAll('\n', '').replaceAll(RegExp(r'\s\s+'), ' ');
+  }
+}
+
+Future<void> _clearOptimizationQueue() async {
+  // Cancel all pending optimization tasks
+  while (_optimizationQueue.isNotEmpty) {
+    final task = _optimizationQueue.removeFirst();
+    task.completer.completeError(
+      Exception('Optimization cancelled due to CLI shutdown'),
+    );
+  }
+
+  // Wait for current task to finish if one is running
+  while (_isOptimizationRunning) {
+    await Future<void>.delayed(const Duration(milliseconds: 100));
   }
 }
