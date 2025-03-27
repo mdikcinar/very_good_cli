@@ -181,6 +181,7 @@ class Flutter {
     bool recursive = false,
     bool collectCoverage = false,
     bool optimizePerformance = false,
+    bool keepOptimizers = false,
     Set<String> ignore = const {},
     double? minCoverage,
     String? excludeFromCoverage,
@@ -251,6 +252,7 @@ class Flutter {
           () => _flutterTest(
             cwd: cwd,
             collectCoverage: collectCoverage,
+            keepOptimizers: keepOptimizers,
             testRunner: testRunner,
             arguments: [
               ...?arguments,
@@ -263,7 +265,7 @@ class Flutter {
             stdout: stdout ?? noop,
             stderr: stderr ?? noop,
           ).whenComplete(() async {
-            if (optimizePerformance) {
+            if (optimizePerformance && !keepOptimizers) {
               await _cleanupOptimizerFile(cwd);
             }
 
@@ -366,6 +368,7 @@ Future<int> _flutterTest({
   required void Function(String) stderr,
   String cwd = '.',
   bool collectCoverage = false,
+  bool keepOptimizers = false,
   List<String>? arguments,
   FlutterTestRunner testRunner = flutterTest,
 }) {
@@ -407,7 +410,9 @@ Future<int> _flutterTest({
   late final StreamSubscription<ProcessSignal> sigintWatchSubscription;
 
   sigintWatchSubscription = sigintWatch.listen((_) async {
-    await _cleanupOptimizerFile(cwd);
+    if (!keepOptimizers) {
+      await _cleanupOptimizerFile(cwd);
+    }
     await subscription.cancel();
     await sigintWatchSubscription.cancel();
     return completer.complete(ExitCode.success.code);

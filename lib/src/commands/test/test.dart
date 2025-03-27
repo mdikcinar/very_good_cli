@@ -20,6 +20,7 @@ typedef FlutterTestCommand = Future<List<int>> Function({
   bool recursive,
   bool collectCoverage,
   bool optimizePerformance,
+  bool keepOptimizers,
   double? minCoverage,
   String? excludeFromCoverage,
   String? randomSeed,
@@ -57,6 +58,12 @@ class TestCommand extends Command<int> {
         'optimization',
         defaultsTo: true,
         help: 'Whether to apply optimizations for test performance.',
+      )
+      ..addFlag(
+        'keep-optimizers',
+        defaultsTo: false,
+        help: 'Whether to keep optimizer files after tests are complete.',
+        negatable: false,
       )
       ..addOption(
         'concurrency',
@@ -170,6 +177,7 @@ This command should be run from the root of your Flutter project.''',
         ? Random().nextInt(4294967295).toString()
         : randomOrderingSeed;
     final optimizePerformance = _argResults['optimization'] as bool;
+    final keepOptimizers = _argResults['keep-optimizers'] as bool;
     final updateGoldens = _argResults['update-goldens'] as bool;
     final forceAnsi = _argResults['force-ansi'] as bool?;
     final dartDefine = _argResults['dart-define'] as List<String>?;
@@ -188,6 +196,7 @@ This command should be run from the root of your Flutter project.''',
           stdout: _logger.write,
           stderr: _logger.err,
           collectCoverage: collectCoverage || minCoverage != null,
+          keepOptimizers: keepOptimizers,
           minCoverage: minCoverage,
           excludeFromCoverage: excludeFromCoverage,
           randomSeed: randomSeed,
