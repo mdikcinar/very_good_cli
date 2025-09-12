@@ -1,6 +1,8 @@
 part of 'cli.dart';
 
-const _testOptimizerFileName = '.test_optimizer.dart';
+/// Generate a unique test optimizer filename for the current process
+/// to avoid conflicts when multiple processes are running concurrently.
+String get _testOptimizerFileName => '.test_optimizer_$pid.dart';
 
 /// This class facilitates overriding `ProcessSignal` related behavior.
 /// It should be extended by another class in client code with overrides
